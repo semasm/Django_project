@@ -14,8 +14,20 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
-from django.urls import path
+from django.urls import path, include, re_path
+from django.views.generic import RedirectView
+from mainapp import views
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+
+    # Редирект
+    # path('', RedirectView.as_view(url='mainapp/')),
+    path('', views.FirstContr),
+
+
+    path('mainapp/', include('mainapp.urls'))
 ]
+
+handler404 = "mainapp.views.PNF"
+#handler500 = "mainapp.views.PNF"
