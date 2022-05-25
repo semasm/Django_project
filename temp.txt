@@ -1,0 +1,2111 @@
+
+
+Announcing the first SHA-1 collision | Hacker News
+
+Hacker News
+new | past | comments | ask | show | jobs | submit 
+login
+
+
+
+
+ Announcing the first SHA-1 collision (googleblog.com)
+3030 points by pfg on Feb 23, 2017  | hide | past | favorite | 485 comments 
+
+
+  
+ 
+nneonneo on Feb 23, 2017  | next [–] 
+The visual description of the colliding files, at http://shattered.io/static/pdf_format.png, is not very helpful in understanding how they produced the PDFs, so I took apart the PDFs and worked it out.Basically, each PDF contains a single large (421,385-byte) JPG image, followed by a few PDF commands to display the JPG. The collision lives entirely in the JPG data - the PDF format is merely incidental here. Extracting out the two images shows two JPG files with different contents (but different SHA-1 hashes since the necessary prefix is missing). Each PDF consists of a common prefix (which contains the PDF header, JPG stream descriptor and some JPG headers), and a common suffix (containing image data and PDF display commands).The header of each JPG contains a comment field, aligned such that the 16-bit length value of the field lies in the collision zone. Thus, when the collision is generated, one of the PDFs will have a longer comment field than the other. After that, they concatenate two complete JPG image streams with different image content - File 1 sees the first image stream and File 2 sees the second image stream. This is achieved by using misalignment of the comment fields to cause the first image stream to appear as a comment in File 2 (more specifically, as a sequence of comments, in order to avoid overflowing the 16-bit comment length field). Since JPGs terminate at the end-of-file (FFD9) marker, the second image stream isn't even examined in File 1 (whereas that marker is just inside a comment in File 2).tl;dr: the two "PDFs" are just wrappers around JPGs, which each contain two independent image streams, switched by way of a variable-length comment field.
+ 
+
+
+
+  
+ 
+taftster on Feb 23, 2017  | parent | next [–] 
+Wow, nice. Thanks. It seems everyone is thinking the secret sauce had something to do with embedding appropriate junk to the PDF format itself.I was cynically thinking that Google might, as an aside, be recruiting with this disclosure; looking for people (like you) who actually solved the "how they did it" puzzle.
+ 
+
+
+
+  
+ 
+digikata on Feb 23, 2017  | parent | prev | next [–] 
+So if one were hashing data or a document format that also contained a bit of self-referential integrity data, e.g. the end of the data has a CRC of the rest of the block, or maybe a cryptographic signature using some other hash, wouldn't that further constrain the search space? Then not only would one need to back out the random bits needed to complete the SHA-1 collision, it would also have to satisfy a some other constraint within the other data in the block.The best thing would be if one could prove a mathmatically incompatible set of counter functions where data colliding in the hash of one function would prevent the other function from validating correctly.
+ 
+
+
+
+  
+ 
+benaiah on Feb 23, 2017  | root | parent | next [–] 
+> The best thing would be if one could prove a mathmatically incompatible set of counter functions where data colliding in the hash of one function would prevent the other function from validating correctly.I'm a rank amateur, so this is completely outside of my wheelhouse, but this sounds suspect. I don't think you can make hash collision impossible, even with multiple functions, unless the combined hashes contain as much data as the originals or the combined functions have restricted inputs. The point of hashes is making collisions hard, not mathematically impossible - the latter is, I believe, itself impossible.Like I said, I'm totally unqualified to speak on this, so I may well be missing something here.
+ 
+
+
+
+  
+ 
+versteegen on Feb 24, 2017  | root | parent | next [–] 
+You are correct: by the pigeonhole principle, if the sum of the lengths of all the hashes/checksums is less than the length of the checksummed data, then collisions exist.
+(A detail: If checksums are included into the input of other checksums, their length doesn't count towards the amount of checksummed data, because they are not free to vary.)
+ 
+
+
+
+  
+ 
+jeeceebees on Feb 24, 2017  | root | parent | next [–] 
+Wouldn't this imply that all hash functions (other than one-to-one mappings) must have collisions?Why does the pigeonhole principle hold?
+ 
+
+
+
+  
+ 
+glitch003 on Feb 24, 2017  | root | parent | next [–] 
+Yes, this is correct.  It's a really simple principle, and I think an explanation can help you understand :)Suppose you have 3 holes, and 4 pigeons, and you stuff the pigeons into holes.  There must be 1 hole with at least 2 pigeons, right?The same is true with hash functions.  If you're hashing data down to a fixed length, like say 256-bits with sha-256, and the data is longer than 256 bits, there must be a collision somewhere.
+ 
+
+
+
+  
+ 
+userbinator on Feb 24, 2017  | root | parent | prev | next [–] 
+Wouldn't this imply that all hash functions (other than one-to-one mappings) must have collisions?Yes, they do. Finding them is the hard part.
+ 
+
+
+
+  
+ 
+clarkcox3 on Feb 24, 2017  | root | parent | prev | next [–] 
+Yes; by definition using something with X possible values to represent something with Y possible values will always have collisions if X < Y.
+ 
+
+
+
+  
+ 
+acjohnson55 on Feb 24, 2017  | root | parent | prev | next [–] 
+Right. But there are properties that can be proven about a given hash function that give us more faith that no collision can be efficiently found: https://en.m.wikipedia.org/wiki/Security_of_cryptographic_ha...
+ 
+
+
+
+  
+ 
+digikata on Feb 24, 2017  | root | parent | prev | next [–] 
+I'm an amateur in this area too, but I'm not suggesting to avoid collisions, I'm suggesting adding a validation function for the hashed data so that if one were to generate an intentional collision, you would still have to contend with generating it in a way that also validated.For Git, Linus basically says the validation function is a prepended type/length.
+https://news.ycombinator.com/item?id=13719368
+ 
+
+
+
+  
+ 
+mcdavex on Feb 27, 2017  | root | parent | next [–] 
+Issue with that is we already addressed that during the MD5/cert collision era; the final cert, as delivered, would by definition contain additional data over the CSR (the signer reference and the start/end dates) but because that information was predictable, the collision could be generated for the expected emitted cert, rather than the input data. Same would apply to git; if you were building the submitted data block, you would know what type and length it was going to be, so could build it with that in mind while colliding.
+ 
+
+
+
+  
+ 
+davidron on Feb 25, 2017  | root | parent | prev | next [–] 
+The composition of the result of the original hash function and the result of that validation function can be taken together to be some larger function.  Call that an uberhash. Such an uberhash is created by putting some number of bits in and getting some smaller number of bits out. There will unfortunately still be collisions.  That trick is an improvement, and newer hashing algorithms contain similarly useful improvements to make creating collisions difficult.
+ 
+
+
+
+  
+ 
+nneonneo on Feb 23, 2017  | root | parent | prev | next [–] 
+It's a good thought, but if the functions have bounded-length outputs (as with all major hash functions), then your combined hash value is still a bounded length. A collision must therefore exist because there are many more potential messages than potential hash values.If your functions produce unbounded-length hashes, then you may as well just be compressing your input to guarantee there are no collisions in your "hash".
+ 
+
+
+
+  
+ 
+digikata on Feb 24, 2017  | root | parent | next [–] 
+True - I suppose the hash function just ends up being the convolution of say an interior CRC and some exterior hash function. That gives us low to zero chance of something mathematically provable. But perhaps some arrangement of functions forces an attacker to scramble the inputs in more drastic ways such that the original data must be altered by more than a handful bytes it could perhaps raise the difficulty on a practical basis.
+ 
+
+
+
+  
+ 
+hueving on Feb 24, 2017  | root | parent | next [–] 
+But to make a strong cryptographic hash, you don't want predictability based on inputs. If you end up with some kind of pattern where getting the same output values requires modifying huge ranges of bytes, that lets attackers reason about inputs that generated a hash.
+ 
+
+
+
+  
+ 
+mtdewcmu on Feb 24, 2017  | root | parent | prev | next [–] 
+Why not use SHA-1 recursively, e.g., append SHA1(text), then SHA1(everything)?Of course, it would probably make more sense just to use one of the recommended replacements in the first place, e.g. SHA-256.
+ 
+
+
+
+  
+ 
+lisper on Feb 23, 2017  | parent | prev | next [–] 
+It's instructive to diff the hexdumps of the two files.  It's surprisingly small.
+ 
+
+
+
+  
+ 
+susam on Feb 24, 2017  | root | parent | next [–] 
+It is small indeed.    $ diff -u <(xxd -g1 shattered-1.pdf) <(xxd -g1 shattered-2.pdf)
+    --- /dev/fd/63	2017-02-24 12:25:17.311939732 +0530
+    +++ /dev/fd/62	2017-02-24 12:25:17.311939732 +0530
+    @@ -10,14 +10,14 @@
+     0000090: 72 65 61 6d 0a ff d8 ff fe 00 24 53 48 41 2d 31  ream......$SHA-1
+     00000a0: 20 69 73 20 64 65 61 64 21 21 21 21 21 85 2f ec   is dead!!!!!./.
+     00000b0: 09 23 39 75 9c 39 b1 a1 c6 3c 4c 97 e1 ff fe 01  .#9u.9...<L.....
+    -00000c0: 73 46 dc 91 66 b6 7e 11 8f 02 9a b6 21 b2 56 0f  sF..f.~.....!.V.
+    -00000d0: f9 ca 67 cc a8 c7 f8 5b a8 4c 79 03 0c 2b 3d e2  ..g....[.Ly..+=.
+    -00000e0: 18 f8 6d b3 a9 09 01 d5 df 45 c1 4f 26 fe df b3  ..m......E.O&...
+    -00000f0: dc 38 e9 6a c2 2f e7 bd 72 8f 0e 45 bc e0 46 d2  .8.j./..r..E..F.
+    -0000100: 3c 57 0f eb 14 13 98 bb 55 2e f5 a0 a8 2b e3 31  <W......U....+.1
+    -0000110: fe a4 80 37 b8 b5 d7 1f 0e 33 2e df 93 ac 35 00  ...7.....3....5.
+    -0000120: eb 4d dc 0d ec c1 a8 64 79 0c 78 2c 76 21 56 60  .M.....dy.x,v!V`
+    -0000130: dd 30 97 91 d0 6b d0 af 3f 98 cd a4 bc 46 29 b1  .0...k..?....F).
+    +00000c0: 7f 46 dc 93 a6 b6 7e 01 3b 02 9a aa 1d b2 56 0b  .F....~.;.....V.
+    +00000d0: 45 ca 67 d6 88 c7 f8 4b 8c 4c 79 1f e0 2b 3d f6  E.g....K.Ly..+=.
+    +00000e0: 14 f8 6d b1 69 09 01 c5 6b 45 c1 53 0a fe df b7  ..m.i...kE.S....
+    +00000f0: 60 38 e9 72 72 2f e7 ad 72 8f 0e 49 04 e0 46 c2  `8.rr/..r..I..F.
+    +0000100: 30 57 0f e9 d4 13 98 ab e1 2e f5 bc 94 2b e3 35  0W...........+.5
+    +0000110: 42 a4 80 2d 98 b5 d7 0f 2a 33 2e c3 7f ac 35 14  B..-....*3....5.
+    +0000120: e7 4d dc 0f 2c c1 a8 74 cd 0c 78 30 5a 21 56 64  .M..,..t..x0Z!Vd
+    +0000130: 61 30 97 89 60 6b d0 bf 3f 98 cd a8 04 46 29 a1  a0..`k..?....F).
+     0000140: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ................
+     0000150: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ................
+     0000160: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ................
+ 
+
+
+
+  
+ 
+nneonneo on Feb 23, 2017  | root | parent | prev | next [–] 
+The differences are confined to two SHA-1 input blocks of 64 bytes each. The first block introduces a carefully-crafted set of bit differences in the intermediate hash value (IHV), which are then eliminated in the second block. After the IHVs synchronize, all future blocks can be identical because SHA-1 can be trivially length-extended.
+ 
+
+
+
+  
+ 
+CGamesPlay on Feb 23, 2017  | parent | prev | next [–] 
+Great analysis. So why did Google choose to use PDFs instead of JPGs directly?
+ 
+
+
+
+  
+ 
+nneonneo on Feb 23, 2017  | root | parent | next [–] 
+The notion of "document security" is a common desire in business and legal contexts. PDFs are a standard representation of documents, whereas JPGs are less common (TIFF might count since it's a somewhat common scanned document format, but I digress).Subverting the most popular document format, one which even provides built-in support for digital signatures is probably much more interesting than subverting the JPG format.Open challenge: build two signed PDFs with identical signatures and different contents - it's not necessarily hard, and it would definitely drive the point home.
+ 
+
+
+
+  
+ 
+spiznnx on Feb 24, 2017  | root | parent | next [–] 
+I wonder if this is the 'standard' thing to do when you have a broken hash function. I took a introductory course in computer security a year ago and we had to create MD5 hash-colliding documents for homework[0].[0] https://courses.engr.illinois.edu/cs461/sp2015/static/proj1.... (see part 4)
+ 
+
+
+
+  
+ 
+ritmatter on Feb 26, 2017  | root | parent | next [–] 
+I'm interested in taking a look at this assignment for my own learning, but it looks like there are a bunch of files you need. It would be cool if you put them in a git repo!
+ 
+
+
+
+  
+ 
+manacit on Feb 23, 2017  | root | parent | prev | next [–] 
+Because many automated systems/image hosting website (imgur, etc) will process JPEGs to optimize them, which I assume would no longer cause there to be a collision.On the other hand, PDFs are almost universally sent as-is, increasing the risk of being able to 'fool' someone.
+ 
+
+
+
+  
+ 
+javajosh on Feb 23, 2017  | root | parent | prev | next [–] 
+Perhaps to be taken more seriously by management. All things being equal, the content of PDFs (auditor reports) is more important than that of JPGs (cat memes).
+ 
+
+
+
+  
+ 
+maxmcd on Feb 23, 2017  | root | parent | prev | next [–] 
+Maybe because JPG bytes or more likely to be manipulated when sending around the web?
+ 
+
+
+
+  
+ 
+jwilk on Feb 23, 2017  | parent | prev | next [–] 
+Thanks! What tools did you use to analyse the JPEG?
+ 
+
+
+
+  
+ 
+nneonneo on Feb 23, 2017  | root | parent | next [–] 
+I used Hachoir (https://github.com/haypo/hachoir3), a Python library that I've contributed to. Hachoir disassembles files using a library of parsers, with the intent of describing the function of every single bit in the file. You can see the resulting disassemblies (rendered with the hachoir-wx GUI) here: http://imgur.com/a/F1cnV
+ 
+
+
+
+  
+ 
+kfrzcode on Feb 23, 2017  | root | parent | next [–] 
+And here I'm refactoring a PHP application feeling like I've come so far. I love that I always have more to learn.
+ 
+
+
+
+  
+ 
+photojosh on Feb 23, 2017  | root | parent | prev | next [–] 
+What an incredible tool... I have a webapp that has as a small component the analysis of JPEG metadata, this will be very useful for future development.
+ 
+
+
+
+  
+ 
+HarrietJones on Feb 23, 2017  | root | parent | prev | next [–] 
+I've just started disassembling a report file format. In python. This is going to be so useful. Thanks!!
+ 
+
+
+
+  
+ 
+spdustin on Feb 23, 2017  | root | parent | prev | next [–] 
+Woah, that's a fascinating tool! What other sorts of things could Hachoir be used for?
+ 
+
+
+
+  
+ 
+nneonneo on Feb 23, 2017  | root | parent | next [–] 
+I use Hachoir for a lot of tasks - digital forensics (examining file tables on a filesystem, discovering slack space taken up by hidden data, etc.); for metadata extraction (for which the hachoir-metadata subproject is designed); for file carving (either with hachoir-subfile or manually); and just to geek out about file formats (did you know .doc/.ppt is secretly a FAT filesystem?).
+ 
+
+
+
+  
+ 
+drkstr on Feb 25, 2017  | root | parent | prev | next [–] 
+Funny, I had no idea it could do all that. I've been using it in production for years to extract width/height/duration of media files at compile time so my loading placeholders are perfectly sized at runtime in a basic web app.
+ 
+
+
+
+  
+ 
+drtune on Feb 24, 2017  | root | parent | prev | next [–] 
+Sweet tool recommendation! Bookmarking that :-) Thx
+ 
+
+
+
+  
+ 
+m3ta on Feb 23, 2017  | prev | next [–] 
+To put things into perspective, let the Bitcoin network hashrate (double SHA256 per second) = B and the number of SHA1 hashes calculated in shattered = G.B = 3,116,899,000,000,000,000G = 9,223,372,036,854,775,808Every three seconds the Bitcoin mining network brute-forces the same amount of hashes as Google did to perform this attack. Of course, the brute-force approach will always take longer than a strategic approach; this comment is only meant to put into perspective the sheer number of hashes calculated.
+ 
+
+
+
+  
+ 
+problems on Feb 23, 2017  | parent | next [–] 
+A few considerations though:- Google used GPUs, much of the Bitcoin network relies on fully custom ASICs now and mining without them isn't really profitable anymore- SHA1 hashes can also be computed over twice as fast as SHA256 even on GPUs, so if someone were to go out and build SHA1 ASICs, you could probably do this very, very fast. It's almost certain that intelligence agencies could invest this effort to say, break SHA1 SSL certs.
+ 
+
+
+
+  
+ 
+btilly on Feb 23, 2017  | root | parent | next [–] 
+It's almost certain that intelligence agencies could invest this effort to say, break SHA1 SSL certs.To the contrary, it is unlikely that they can do so.There is a world of difference between "come up with two things that hash to the same value" and "come up with something that hashes to a particular known value".  It gets harder still if you're trying to add constraints about the format of your text (such as making them look like a potentially valid SSL cert).To illustrate the difference, suppose that you can constrain the algorithm to produce one of a trillion values.  If you generate a million possibilities, odds are good that 2 of them will have the same hash value.  You've generated a collision!  But you need to do a million times as much work to have good odds of generating any particular value.That said, attacks only improve over time.  While it is highly unlikely that intelligence agencies can break SHA1 certs today, it is extremely likely that they will eventually.  Where eventually is 5-20 years.
+ 
+
+
+
+  
+ 
+problems on Feb 23, 2017  | root | parent | next [–] 
+> There is a world of difference between "come up with two things that hash to the same value" and "come up with something that hashes to a particular known value".Doesn't the PDF on their site pretty much prove they can do both of these - at least, in a way? They were able to change the color without impacting the contents of the PDF and get the same SHA1.They probably have a fair bit of garbage data to work with in the PDF format, but it seems likely that you might be able to do similar in certificate formats.Remember, you only need a very small modification to change a valid web cert into a CA cert or a global wildcard.
+ 
+
+
+
+  
+ 
+jsolson on Feb 23, 2017  | root | parent | next [–] 
+No. I don't know the details of the attack, but a third possibility (as I read it) is that both PDF documents are modified in the process until they arrive at a collision.PDF has the convenient property that you can inject arbitrary bogus data into the middle of it with a constant head and tail and it will still be valid. The tail of the file contains a trailer that points to the dictionary that describes where all of the resources in the file are located. The entire file need not be covered by the dictionary (and typically won't be for PDFs that have gone through several rounds of annotation/modification). This leaves the opportunity "dead chunks" that can be modified arbitrarily without changing the rendered result.
+ 
+
+
+
+  
+ 
+makomk on Feb 23, 2017  | root | parent | next [–] 
+Or, if you're really clever - and Ange Albertini is quite good  at this kind of trick - you can design the PDF so that the different garbage in the middle causes the other, unchanged content to be interpreted differently in the two PDF files, possibly even designing it so that the intended contents of each PDF is treated as garbage and ignored entirely in the other PDF.
+ 
+
+
+
+  
+ 
+stcredzero on Feb 23, 2017  | root | parent | next [–] 
+With many image formats, you can just concatenate whatever you want at the end of the file, and the OS and programs will obliviously read and copy the whole file, while the image libraries will happily ignore the extra data.
+ 
+
+
+
+  
+ 
+cestith on Feb 23, 2017  | root | parent | next [–] 
+And then you put PHP tags in that content at the end, and change the .htaccess file to process *.jpeg as PHP scripts, and your webshell looks benign until someone has that in mind looking through the account.
+ 
+
+
+
+  
+ 
+dogma1138 on Feb 24, 2017  | root | parent | next [–] 
+You don't need to find a collision to do that :)
+ 
+
+
+
+  
+ 
+problems on Feb 23, 2017  | root | parent | prev | next [–] 
+Ah, okay. Yeah, that does seem quite possible.They are saying "HTTPS Certificates" are potentially impacted - but they're probably just trying to push people away from SHA1 as fast as possible.
+ 
+
+
+
+  
+ 
+jsolson on Feb 23, 2017  | root | parent | next [–] 
+Re-reading it and checking out the demo on https://shattered.io/ it looks like it's even stranger -- some PDFs are "safe", so it may be that it requires the original document (and hash) to have certain properties to be able to generate a collision (but if it has those properties they may be able to generate them arbitrarily). It sounds like this is going to be reaaaalllly interesting when the 90 day window passes.(also, should've mentioned in original post just for clarity -- I work for Google, but do not know any of the details of this work)
+ 
+
+
+
+  
+ 
+lilyball on Feb 23, 2017  | root | parent | next [–] 
+It's entirely possible that "dangerous" PDFs are simply ones with a dead chunk containing image data in in the middle of it, and if there's no dead chunks, or if the dead chunks don't allow for arbitrary garbage data, then it's "safe".
+ 
+
+
+
+  
+ 
+cbhl on Feb 23, 2017  | root | parent | prev | next [–] 
+I haven't seen the actual PDFs, but the way my crypto prof taught me about this attack in college is that you generate a PDF of the form    if (x == a) {
+      // display good content
+    } else {
+      // display bad content
+    }
+
+You have to craft this PDF file in such a way that given a SHA1 collision (a, b) that the file with x = a and the file with x = b have the same SHA1. (There are some nuances about aligning to block boundaries, IIRC.)
+ 
+
+
+
+  
+ 
+btilly on Feb 23, 2017  | root | parent | next [–] 
+Exactly the right idea.More technically, the reason why this is possible is that this is a block cipher.  You take the file, and proceed block by block.  So if two files are identical except for one block, and those differing blocks generates the same SHA-1, then the whole files will generate the same SHA-1.  You can make it look like any pair of documents, but the actual content of the source includes both documents.This trick works better with some document formats than others.  PDF is great.  Plain text, not so much.This trick is absolutely useless unless you control both documents.  But if you already control a certificate, then you have no need to try to switch to a fake one
+ 
+
+
+
+  
+ 
+haberman on Feb 23, 2017  | root | parent | next [–] 
+> So if two files are identical except for one block, and those differing blocks generates the same SHA-1, then the whole files will generate the same SHA-1.Is it really that simple?  If that were the case, then you could take the two colliding blocks from Google's PDF and trivially use them to create an arbitrary number of colliding files.  I would be really surprised if it was that easy.
+ 
+
+
+
+  
+ 
+schoen on Feb 23, 2017  | root | parent | next [–] 
+It may be a question about the implications of https://en.wikipedia.org/wiki/Length_extension_attack, which allows computing H(X∥Y) from H(X), len(X), and Y (without knowing X!). I'm not immediately sure how that applies or fails to apply in the case of a hash collision; that's an interesting thing to think through.
+ 
+
+
+
+  
+ 
+schoen on Feb 23, 2017  | root | parent | next [–] 
+I was a bit surprised to see this because I thought there might be more constraints on it, but I tried adding arbitrary strings to the end of both PDFs and re-hashing, and the hashes continue to be the same after appending arbitrary arbitrary-length strings. I guess this is indeed a consequence of the length-extension attack; we can argue that if -- for this kind of hash -- H(X∥Y) always depends only on H(X), len(X), and Y, then if len(a) = len(b) and H(a) = H(b), H(a∥Y) must also equal H(b∥Y).
+ 
+
+
+
+  
+ 
+WatchDog on Feb 23, 2017  | root | parent | next [–] 
+I suspect you would see the same behaviour even with a hash function that is not vulnerable to length extension attacks. 
+My understanding is that protecting against length extension is about hiding the internal state of the cipher in the result hash, for the purposes of protecting a secret in the plaintext. But if the state is the same between each document, and you have access to the whole plaintexts, I don't see why length extension would play a role.
+ 
+
+
+
+  
+ 
+schoen on Feb 24, 2017  | root | parent | next [–] 
+My intuition about this would be about hashes with "hidden state" that is neither reflected in nor reconstructible from the digest. For example, suppose the hash has a 1024-bit internal state and a 256-bit digest. Then two inputs that have a hash collision have the same digest but only about 2¯⁷⁶⁸ probability of having the same internal state, so if you continue to extend them, subsequent hashes will be different.I think there are engineering reasons why this isn't typically the case for the hashes we normally use, but I'm just hypothesizing a way that this could be different.
+ 
+
+
+
+  
+ 
+WatchDog on Feb 24, 2017  | root | parent | next [–] 
+That makes sense, are there common hash algorithms that use different sized internal-state/digest?
+ 
+
+
+
+  
+ 
+schoen on Feb 24, 2017  | root | parent | next [–] 
+Apparently it's a general architectural proposal.https://en.wikipedia.org/wiki/Merkle%E2%80%93Damg%C3%A5rd_co...Maybe I should consult a textbook (or a cryptographer) to understand more.My intuition is that Merkle and Damgård may have thought that you get the greatest efficiency (or "bang for your buck") in some sense by simply outputting a digest that is as long as the internal state, since for some properties related to the intrinsic strength of the hash you would prefer that the digest be long. However, Lucks was apparently explicitly concerned about length extension and wanted to have some hidden state in order to prevent such phenomena, and hence proposed deliberately engineering it in.But I'm not sure if that accurately presents the reason why the internal state and digest lengths have typically been the same in the past.Edit: https://en.wikipedia.org/wiki/Comparison_of_cryptographic_ha... lists the internal state size alongside the output digest size. According to this chart, these functions have the same output and internal state lengths: MD4, MD5, RIPEMD and variants, SHA-0, SHA-1, Tiger-192, GOST, HAVAL-256, SHA-256, SHA-512, WHIRLPOOL.These functions have a larger (hidden) internal state: RadioGatún, Tiger-160, Tiger-128, HAVAL-224, HAVAL-192, HAVAL-160, HAVAL-128, SHA-224, MD2, SHA-384, SHA-512/224, SHA-512/256, BLAKE2 variants, SHA-3 and all its variants, and PANAMA.Sometimes the larger internal state is achieved simply by deliberately truncating (limiting the length of) the output hash, so the end user (and attackers) don't know the full original output hash and hence can't deduce the full original internal state.I didn't know about this distinction before, although I once heard someone mention it in connection with BLAKE and SHA-3 candidates.
+ 
+
+
+
+  
+ 
+btilly on Feb 23, 2017  | root | parent | prev | next [–] 
+Yes, it really is.  You have to be careful where you put the colliding blocks, but everything else is open.The same was true of MD5, and is true of any other block cipher.
+ 
+
+
+
+  
+ 
+caf on Feb 24, 2017  | root | parent | prev | next [–] 
+But if you already control a certificate, then you have no need to try to switch to a fake oneThe way previous certificate collision attacks have worked is that you generate two certificate signing requests that are for different domains, yet will hash to the same value once the certificate authority applies their serial number, date &c.  You get the certificate request that applies to your own domain minted into a genuine certificate, then transplant the signature into your colliding certificate for the other domain.This relies on finding a certificate authority that is using the vulnerable hash function and being able to predict the serial number that will be applied to the certificate with reasonable probability.  Doing the latter tends to imply being able to generate the collision very quickly.
+ 
+
+
+
+  
+ 
+simias on Feb 23, 2017  | root | parent | prev | next [–] 
+No, they can't chose the hash value. Or, to put it an other way, they can't find a collision for an arbitrary file, they can only craft two particular files that happen to collide.See this image: http://shattered.it/static/pdf_format.pngThe "collision blocks" is where the magic happen, given the two different prefixes (with the different colors) they have to craft two sequences of bits that will put the SHA1 state machine in the same internal state once processed.Once the state machines are "synchronized" you can add whatever identical content you want to both files after that and it'll always hash up to the same value. You can't control that value however.
+ 
+
+
+
+  
+ 
+jwilk on Feb 23, 2017  | root | parent | next [–] 
+> given the two different prefixes (with the different colors) they have to craft two sequences of bits that will put the SHA1 state machine in the same internal state once processed.No, this is an identical-prefix attack.
+ 
+
+
+
+  
+ 
+OMGWTF on Feb 23, 2017  | root | parent | prev | next [–] 
+> Doesn't the PDF on their site pretty much prove they can do both of these - at least, in a way? They were able to change the color without impacting the contents of the PDF and get the same SHA1.I think they prepared both PDFs and then tweaked with bits in both of them. This is much easier than tampering with only one PDF.So I think it's still very hard to generated a CA cert where you can just copy the signature of an existing cert.But maybe you can predict exactly what parts from your signing request and what timestamp and serial number and so on the CA will use, then you can maybe precompute a signing request that will result in a cert where you can replace some parts with other, evil, precomputed ones.
+ 
+
+
+
+  
+ 
+schoen on Feb 23, 2017  | root | parent | next [–] 
+> But maybe you can predict exactly what parts from your signing request and what timestamp and serial number and so on the CA will use, then you can maybe precompute a signing request that will result in a cert where you can replace some parts with other, evil, precomputed ones.That was true in Sotirov's MD5 collision attack (which I mentioned elsewhere in this thread) and is no longer true because of CA/B Forum rule changes requiring randomized serial numbers (currently, containing at least 64 random bits).
+ 
+
+
+
+  
+ 
+grepthisab on Feb 23, 2017  | root | parent | prev | next [–] 
+So the Birthday Problem, basically?[1]https://en.wikipedia.org/wiki/Birthday_problem
+ 
+
+
+
+  
+ 
+btilly on Feb 23, 2017  | root | parent | next [–] 
+That is related, yes.
+ 
+
+
+
+  
+ 
+stepik777 on Feb 23, 2017  | root | parent | prev | next [–] 
+> break SHA1 SSL certs.It's not possible to break existing SHA1 certificates because this attack is to generate collisions, not finding preimages.
+ 
+
+
+
+  
+ 
+xyzzyz on Feb 23, 2017  | root | parent | next [–] 
+You are thinking about this in a wrong way. It is in fact true that being able to generate collisions allows you to break SSL. What you do is this: generate two certificates with colliding hashes, one for google.com, the other for your own domain. Verisign will gladly sign the second one, since you own the domain, but since the hashes match, you can also use the same signature for the first one. Now you can impersonate google.com.Of course, the real certificate issuance process is more complicated and has some extra precautions to protect from it, my point is that you don't need preimage, collisions should suffice for breaking SSL.
+ 
+
+
+
+  
+ 
+agrajag on Feb 23, 2017  | root | parent | next [–] 
+Those extra precautions are designed explicitly to prevent the ability to get a certificate using a collision attack. CA's now must explicitly introduce entropy into a certificate to prevent exactly this, and will not sign a certificate exactly to the specifications of a client.There's a great deal of handwaving there saying that a collision attack alone is sufficient for breaking SSL.
+ 
+
+
+
+  
+ 
+mike_hearn on Feb 23, 2017  | root | parent | prev | next [–] 
+Moreover, how quickly we forget! An intelligence agency did in fact carry out such an attack on code signing certificates using an MD5 collision as part of the FLAME malware.
+ 
+
+
+
+  
+ 
+jakob223 on Feb 23, 2017  | root | parent | prev | next [–] 
+> say, break SHA1 SSL certsMaybe, and probably, but probably not within the scope of this attack. This attack relies on being able to have a large similar prefix and a lot of control over further internal data; SSL certs are somewhat more constrainted.
+ 
+
+
+
+  
+ 
+timeal on Feb 23, 2017  | root | parent | next [–] 
+This attack is applicable to SSL certs. Not most CAs as they have deployed counter-measures (such as using a long, random serial number) after the publication of the colliding MD5 rogue CA (https://www.win.tue.nl/hashclash/rogue-ca/) but I'm sure there are tons of companies with IT department and internal CAs who don't follow best practices and could be attacked with SHA1 collisions.
+ 
+
+
+
+  
+ 
+pfg on Feb 23, 2017  | root | parent | next [–] 
+Even root CAs have been known to not comply with the randomized serial number requirement occasionally, see [1] for a recent example, with the most recent (SHA-1) certificate being issued in August of last year.[1]: https://bugzilla.mozilla.org/show_bug.cgi?id=1267332#c5
+ 
+
+
+
+  
+ 
+problems on Feb 23, 2017  | root | parent | prev | next [–] 
+Would a TLS certificate not offer such a large similar prefix? Just change the domain to a wildcard or something like the RapidSSL MD5 attack from a few years back.
+ 
+
+
+
+  
+ 
+schoen on Feb 23, 2017  | root | parent | next [–] 
+In https://www.win.tue.nl/hashclash/rogue-ca/, Sotirov et al. were able to use the ability to create MD5 collisions to create a pair of colliding certificates because the content of an about-to-be-issued certificate was almost completely predictable. In response to this, the industry added requirements for CAs to include unpredictable values (such as an unpredictable serial number) in certificates. For example, the certificate for HN has serial number 00:EA:21:7C:EA:6C:1F:97:9E:6A:91:90:B7:68:52:D6:63, which is at least in part nonsequential and random, specifically in order to prevent an attacker who knows a collision attack in the hash function used by the CA from being able to exploit it.This precaution means that an attack like this isn't immediately directly usable against TLS, because the work factor has been increased dramatically.Edit: the adopted change to the rules is at https://cabforum.org/2016/07/08/ballot-164/ and requires at least 64 bits of CSPRNG entropy in the serial number, specifically as a response to Sotirov. I forgot the history of the section that it replaced (which recommended at least 20 unpredictable bits), but I think that may also have been a response to Sotirov; if the old recommendation had been in use then Sotirov's original attack would not have worked.
+ 
+
+
+
+  
+ 
+jwilk on Feb 23, 2017  | root | parent | next [–] 
+Also, they used a chosen-prefix attack for creating colliding certificates.The SHA-1 attack is identical-prefix, which gives you much less flexibility.
+ 
+
+
+
+  
+ 
+JoshTriplett on Feb 23, 2017  | root | parent | prev | next [–] 
+> Just change the domain to a wildcard or somethingOr change a CA:FALSE certificate to CA:TRUE, so you have your own intermediate certificate.
+ 
+
+
+
+  
+ 
+drzaiusapelord on Feb 23, 2017  | parent | prev | next [–] 
+Well, certainly there's a lot of work that can be done by a computer network that spans what? 500+k computers all pegging their many cpu/gpu/asic processors at 100% 24/7. The bitcoin network, if seen as one processing unit, is history's most powerful computer. Of course it can punch out difficult work quickly. That doesn't mean your average Russian hacker can.Of course this cuts both ways, we'll probably be seeing ASIC's designed just for this work that'll vastly cut down how much time is required to make these collisions.Also, I find it impressive SHA-1 lasted 10 years. Think about all our advances in that time from both a hardware and cryptographic perspective. A decade of life in the cryptospace should be seen as a win, not a loss. I'm not sure why we thought these things would last forever. If anything, the cryptospace is faster moving now than ever. The concept of a decades long standard like we had with DES or AES is probably never going to happen again.
+ 
+
+
+
+  
+ 
+xanderstrike on Feb 23, 2017  | root | parent | next [–] 
+Give it a few years and your average Russian hacker with a handful of stolen credit cards will be able to buy enough VPS muscle to crack it.
+ 
+
+
+
+  
+ 
+Klathmon on Feb 23, 2017  | root | parent | next [–] 
+Or that same russian hacker probably already has the compute power in his malware botnet to crack it in the span of months.
+ 
+
+
+
+  
+ 
+comboy on Feb 23, 2017  | parent | prev | next [–] 
+I wonder if SHA1 was used instead of SHA256 for Bitcoin mining, how much optimization these SHA1 discoveries would bring to the mining process (since it's more like partial brute forcing rather than finding collisions) i.e. what would be the percentage difference in the difficulty because of them - on the long run, since it takes some time to implement those things as ASICs.
+ 
+
+
+
+  
+ 
+hatsunearu on Feb 23, 2017  | root | parent | next [–] 
+>since it takes some time to implement those things as ASICs.not really. it's just a few man-years to develop a kickass hdl and a lot of money and you're good to go. all bitcoin did was create a massive market for sha1 asics. i wonder if those asics can be used to reduce the 110 gpu-years down to a few asic-years?
+ 
+
+
+
+  
+ 
+duozerk on Feb 23, 2017  | root | parent | next [–] 
+> all bitcoin did was create a massive market for sha1 asicsA massive market for SHA256(SHA256(value)) asics, actually; so no, they can hardly be used for anything other than bitcoin mining.
+ 
+
+
+
+  
+ 
+dwaltrip on Feb 23, 2017  | parent | prev | next [–] 
+This says more about the Bitcoin network than it does about the ease with which one can create a SHA-1 collision.From the article:Nine quintillion (9,223,372,036,854,775,808) SHA1 computations in total.6,500 years of CPU computation for 1st phase of attack.110 years of GPU computation for 2nd phase of attack.
+ 
+
+
+
+  
+ 
+TheGrumpyBrit on Feb 23, 2017  | root | parent | next [–] 
+It certainly raises an interesting question. The go-to response when anybody discusses brute forcing bitcoin is that the sheer number of possibilities makes finding a collision infinitesimally small. And that's true. Same for .onion certificates.But Google certainly haven't been attacking this for the last 6,500 years. With a sufficiently obscene amount of resources, it IS feasible to create an index of every possible public/private keypair. It's not profitable to do so just for the purpose of plundering bitcoin wallets, but if you're a government doing it for other reasons, it might be worthwhile.
+ 
+
+
+
+  
+ 
+matt4077 on Feb 23, 2017  | root | parent | next [–] 
+Brute-forcing bitcoin addresses is not in "economically senseless" category. It's in "even if every atom in the universe were part of a CPU..."
+ 
+
+
+
+  
+ 
+juhanima on Feb 23, 2017  | root | parent | next [–] 
+That's right. The numbers above are in the vicinity of 2^60. A typical ECC keylenght is 256 bits, and all numbers in that space are equally good secret keys. The remaining almost 200 bits still present something of an obstacle.
+ 
+
+
+
+  
+ 
+cestith on Feb 23, 2017  | root | parent | prev | next [–] 
+Check my math.42U, 4 sockets, 8 cores = 1344 CPUs per rack.
+two PCIe slots per U = 84 GPUs per rack
+That's not even that exotic of hardware.
+fifteen racks = 20160 CPUs and 1260 GPUsyum info 
+So five months or so assuming the GPUs can't be fed until the CPUs complete processing, give or take, in 15 racks of decently higher-end off-the-shelf stuff.
+ 
+
+
+
+  
+ 
+hulahoof on Feb 23, 2017  | root | parent | prev | next [–] 
+I guess with their 2 year timeline they were using at least 3250x whatever they define as a standard CPU - I wouldn't be surprised if it was simply 3250 cores @ 2 years or an equivalent higher number and less time.I'd be interested about the actual specs of the hardware if anyone see's that info pop up.
+ 
+
+
+
+  
+ 
+mabbo on Feb 23, 2017  | prev | next [–] 
+One practical attack using this: create a torrent of some highly desirable content- the latest hot TV show in high def or whatever. Make two copies, one that is malware free, another that isn't.Release the clean one and let it spread for a day or two. Then join the torrent, but spread the malware-hosting version. Checksums would all check out, other users would be reporting that it's the real thing, but now you've got 1000 people purposely downloading ransomware from you- and sharing it with others.Apparently it costs around $100,000 to compute the collisions, but so what? If I've got 10,000 installing my 1BTC-to-unlock ransomware, I'll get a return on investment.This will mess up torrent sharing websites in a hurry.Edit: some people have pointed out some totally legitimate potential flaws in this idea. And they're probably right, those may sink the entire scheme. But keep in mind that this is one idea off the top of my head, and I'm not any security expert. There's plenty of actors out there who have more reasons and time to think up scarier ideas.The reality is, we need to very quickly stop trusting SHA1 for anything. And a lot of software is not ready to make that change overnight.
+ 
+
+
+
+  
+ 
+dragonwriter on Feb 23, 2017  | parent | next [–] 
+I may be confusing p2p protocols, but doesn't BitTorrent grab different chunks from different sources, so that if there are different people spreading different versions that are viewed as the same, people are going to mostly get either the original (and initially more common) version or broken junk that is a mix of the two versions?
+ 
+
+
+
+  
+ 
+runeks on Feb 23, 2017  | root | parent | next [–] 
+Not only that, BitTorrent also uses a Merkle tree of the torrent data split into pieces (e.g. 1 MB per piece), meaning you need to compute thousands of colliding hashes, with the added restriction that the data must be exactly the piece length.The torrent ID is the Merkle root hash, which is a hash of all the piece-hashes hashed together in a tree structure: https://i.stack.imgur.com/JVdvj.png
+ 
+
+
+
+  
+ 
+sp332 on Feb 23, 2017  | root | parent | next [–] 
+If you find a collision for the smallest piece, you don't need to find collisions for any higher nodes on the Merkle tree because you'll just be hashing the same values as the legit version.
+ 
+
+
+
+  
+ 
+MayeulC on Feb 23, 2017  | root | parent | next [–] 
+I don't know enough specifics about sha-1 or bit torrent, but it would seem to me that it depends on the data that is chosen for the base ("leaves")  of the tree: if it just consists in taking the hashes, concatenating them, and move higher until you only have one hash, then yes.However, if the data itself is concatenated for the first step, that might not be the case (depending on the sha-1 algorithm). I seem to recall that md5 operates on 512 bit chuncks (padded if necessary), and takes the result to seed the next computation. So, with md5 (if I recall correctly, still), the attack could work if each part of the torrent was a multiple of 512 bits, Merkel or not, and regardless of the base.
+Of course, you cannot change the whole torrent in that case, as it would be prohibitively expensive. And you still have to keep the same file size.I would love to hear a bit more on the topic from someone more knowledgeable about hashes and torrents.
+ 
+
+
+
+  
+ 
+the8472 on Feb 23, 2017  | root | parent | next [–] 
+The process is fairly simple. Files are concatenated and that blob is then chunked into multiple-of-16KiB-sized pieces. Each piece is hashed. The hashes are concatenated and embedded as string in the torrent file. Then a specific subdictionary of the torrent file including the piece hashes, filenames and the length of the data is hashed to yield the infohash.Magnets only convey the infohash. .torrent files convey the whole metadata, including the pieces hash string.
+ 
+
+
+
+  
+ 
+Aissen on Feb 23, 2017  | root | parent | prev | next [–] 
+Then this smallest piece must also change the file type to an executable, and contain a meaningful payload.
+ 
+
+
+
+  
+ 
+sp332 on Feb 23, 2017  | root | parent | next [–] 
+Well, you could put most of the payload in other parts of the file. People probably wouldn't notice if they didn't go looking. And the small part could exploit a popular codec instead of being an executable itself.
+ 
+
+
+
+  
+ 
+Natanael_L on Feb 23, 2017  | root | parent | prev | next [–] 
+Polyglot files are trivial to create, that's the easiest part here.
+ 
+
+
+
+  
+ 
+Aissen on Feb 23, 2017  | root | parent | next [–] 
+I didn't say it wasn't, it was for context. Also you need to be polyglot + have enough space for the collision computation.I just checked, it should be really easy. A piece/chunk size in torrents is 64kB. The total size of each PDF in the paper is 2.7kB.
+ 
+
+
+
+  
+ 
+loeg on Feb 23, 2017  | root | parent | next [–] 
+A more common chunk size would be 256 kb - 2 MiB.  Yeah, very doable.
+ 
+
+
+
+  
+ 
+runeks on Feb 23, 2017  | root | parent | prev | next [–] 
+Good point. It should be possible to create a video file that fills ups exactly the first n pieces, such that the last piece contains only the ambiguous data.
+ 
+
+
+
+  
+ 
+the8472 on Feb 23, 2017  | root | parent | prev | next [–] 
+Most torrents use a flat list of hashes. The merkle tree is an extension. With a collision you could replace the metadata wholesale though, pointing at completely different content.But then the torrent client would also present that different content from the start when asking you what to save.
+ 
+
+
+
+  
+ 
+JeremyBanks on Feb 23, 2017  | root | parent | prev | next [–] 
+Do you know of anybody that's actually using merkle torrents? I expect they're probably being used in some limited scenarios, but they're probably less than 1% of BitTorrent activity, so it's a bit misleading to refer to it when defending BitTorrent's security model.
+ 
+
+
+
+  
+ 
+ktta on Feb 23, 2017  | root | parent | prev | next [–] 
+Well, you really don't need the complete file either. Since torrents are usually shared unzipped, they can just replace a chunk with a bad one (It varies usually from 256KB-2MB) and a single chunk can be replaced with a bad one embedded with malware to cause problems.Especially something like a buffer overflow attack on a video file.
+ 
+
+
+
+  
+ 
+nstj on Feb 23, 2017  | root | parent | prev | next [–] 
+jinx.
+ 
+
+
+
+  
+ 
+Ajedi32 on Feb 23, 2017  | parent | prev | next [–] 
+Edit: Nevermind, I misinterpreted something in the report. Collisions between malicious and non-malicious documents are indeed most likely feasible.Original comment:While theoretically possible, I don't really see that particular attack as being an actual, practical problem anytime soon.In order for that to work not only would you have to find _a_ collision, but you'd have to find one with the additional constraints of "one copy is malware free while the other isn't", which would be significantly more difficult (at least, as I understand it).That said, I agree it's probably time for torrents to start moving to another hash function. With time and additional research, it's entirely possible that theoretical attacks like the one you described could eventually become practical.
+ 
+
+
+
+  
+ 
+Pigo on Feb 23, 2017  | root | parent | next [–] 
+I really don't see why anyone would go through all this trouble when you can still just put Star_Wars_XIII.exe out there and get 10k downloads.
+ 
+
+
+
+  
+ 
+tripzilch on Feb 24, 2017  | root | parent | next [–] 
+Because the 10k people that would fall for such a trick (and I don't doubt there's at least 10k of them), are most probably already part of at least 23 other botnets.
+ 
+
+
+
+  
+ 
+Pigo on Feb 24, 2017  | root | parent | next [–] 
+I never thought about that potential complication.
+ 
+
+
+
+  
+ 
+Natanael_L on Feb 23, 2017  | root | parent | prev | next [–] 
+No, that's not the big problem. Every collision of this kind so far just requires a random looking section, and allows another section to be whatever you want. You can just swap out one file for malware.
+ 
+
+
+
+  
+ 
+Ajedi32 on Feb 23, 2017  | root | parent | next [–] 
+Ah, sorry. I got confused by this section on shattered.it, which seemed to be saying that merely requiring a certain level of entropy in the resulting documents would be enough to mitigate the attack:> Are TLS/SSL certificates at risk? [...] it is required that certificate authorities insert at least 20 bits of randomness inside the serial number field. If properly implemented this helps preventing a practical exploitation.After giving it a bit more thought though, I realize now though that this mitigation actually works by preventing the attacker from fully controlling the hash of the first, non-malicious document.
+ 
+
+
+
+  
+ 
+schoen on Feb 23, 2017  | root | parent | next [–] 
+The project's site is referring to an outdated version of the requirement. As I noted above, the requirement they refer to is only a SHOULD (some CAs might not have complied with it) and was replaced at the end of September with a SHALL which requires 64 bits rather than 20.https://cabforum.org/2016/07/08/ballot-164/Edit: I told them about this and they've fixed it; it now says "64 bits" instead of "20 bits".
+ 
+
+
+
+  
+ 
+Natanael_L on Feb 23, 2017  | root | parent | prev | next [–] 
+CA certs are different than the general case.
+ 
+
+
+
+  
+ 
+jakob223 on Feb 23, 2017  | root | parent | prev | next [–] 
+This attack requires both to be, in some sense, "random looking". i.e. you can't generate a collision for an arbitrary first text.
+ 
+
+
+
+  
+ 
+chaosfox on Feb 23, 2017  | parent | prev | next [–] 
+this isn't quite true, bittorrent have checksums for each piece in the torrent, I not saying its impossible to do but its significantly harder than just finding 2 files with the same hash.
+ 
+
+
+
+  
+ 
+cesarb on Feb 23, 2017  | root | parent | next [–] 
+Wouldn't that make the attack easier, since you just have to manufacture a pair of pieces with the same hash, instead of having to make the whole file have the same hash?
+ 
+
+
+
+  
+ 
+chaosfox on Feb 23, 2017  | root | parent | next [–] 
+that depends on the attacker objective, if you just want to trash the file you can just search for any piece that have a hash collision, but if you want to turn the file into a malware you will need to modify the file in a specific way, possibly spanning multiple pieces, and there's less room for fuzzing the hash.
+ 
+
+
+
+  
+ 
+rocqua on Feb 23, 2017  | root | parent | next [–] 
+As mentioned else were in this thread, you can put a lot of the payload outside the single collision piece. People are unlikely to go looking for executable code inside a video.All you need for the colliding pieces is for one to trigger the payload and the other not to trigger the payload.
+ 
+
+
+
+  
+ 
+heinrich5991 on Feb 23, 2017  | root | parent | prev | next [–] 
+People do exploits by changing 1 bit! I'm sure you can distribute malware using just one chunk, given some cleverness.
+ 
+
+
+
+  
+ 
+mabbo on Feb 23, 2017  | root | parent | prev | next [–] 
+Okay, so the challenge gets broken down into creating a single piece that hides the malware. Even better really, I can join the network with a fleet of hosts all sharing that particular piece at a very high rate- but it's my bad version of it. Those hosts can focus on just distributing the malware, rather than the whole file.
+ 
+
+
+
+  
+ 
+andai on Feb 23, 2017  | root | parent | prev | next [–] 
+Does bt have checksums for pieces and files? I thought it was only pieces.
+ 
+
+
+
+  
+ 
+chaosfox on Feb 23, 2017  | root | parent | next [–] 
+it is only pieces. pieces can potentially span multiple files.
+ 
+
+
+
+  
+ 
+espadrine on Feb 23, 2017  | parent | prev | next [–] 
+> the latest hot TV show in high def or whateverSince it takes 6,500 CPU years and 110 GPU years, it won't quite be the latest show, unless you have really deep pockets.There are way less costly ways to make money illegally using simpler vulnerabilities or by being a pay-to-use DDoS provider.
+ 
+
+
+
+  
+ 
+Bartweiss on Feb 23, 2017  | root | parent | next [–] 
+Realistically, the closest low-cost attack is to just upload a malware-laden torrent of the latest TV show and not even pretend. It won't get seeded as widely, but you can do the same thing again next week.
+ 
+
+
+
+  
+ 
+ksk on Feb 23, 2017  | parent | prev | next [–] 
+>Edit: some people have pointed out some totally legitimate potential flaws in this idea. And they're probably right, those may sink the entire scheme. But keep in mind that this is one idea off the top of my head, and I'm not any security expert.Well to be fair to those people, you started out saying its a practical attack when it wasn't even a theoretical one.
+ 
+
+
+
+  
+ 
+vortico on Feb 23, 2017  | root | parent | next [–] 
+Well, it's practical on a small scale. You could wait until a torrent has only 1-2 seeders, and then you can hope to give leechers all blocks of a file. Or, you could deliver a torrent with a 1GB installer (for some software package) and a 100kb keygen (which you replace with malware) fitting inside a 1MB block and you can be sure to spread that around regardless of the number of other seeders.
+ 
+
+
+
+  
+ 
+svantana on Feb 23, 2017  | parent | prev | next [–] 
+Interesting premise, some objections:1) wouldn't search time be proportional to file size for hashes? These guys worked on 400kb pdf's, while most popular torrent content is in the GB range2) Wouldn't this only work for users that got the entire file from you? fileA and fileB may have the same hash, but some random portions from each will have a different hash.
+ 
+
+
+
+  
+ 
+dcosson on Feb 23, 2017  | root | parent | next [–] 
+You could replace a single chunk with your malware. Then it could be any size and the rest of the chunks could be the legit content. I don't know much about video codecs, but this assumes there's some way to break out of the playback and run your malicious code. Maybe a buffer overflow, or maybe if your malware is the first chunk of the file you could get it to run first somehow before the video?Or even better, torrents of apps sometimes come with an executable that you run to crack the DRM (so I hear). You could swap that out undetected, and you can probably also convince people they have to run it with sudo.
+ 
+
+
+
+  
+ 
+minitech on Feb 23, 2017  | root | parent | next [–] 
+> Maybe a buffer overflow, or maybe if your malware is the first chunk of the file you could get it to run first somehow before the video?If you have an exploit in a video player, you don’t really need the collision.> You could swap that out undetected, and you can probably also convince people they have to run it with sudo.Also don’t need a collision (or more sudo than usual) for this; just make it patch the application (like it’s supposed to!) with something that runs with low probability.
+ 
+
+
+
+  
+ 
+vorticalbox on Feb 23, 2017  | parent | prev | next [–] 
+It's would more profitable to just develop undetectable malware and spread that from the start.
+ 
+
+
+
+  
+ 
+babyrainbow on Feb 23, 2017  | parent | prev | next [–] 
+Malware in a video? Is that possible? How does it work?
+ 
+
+
+
+  
+ 
+ktta on Feb 23, 2017  | root | parent | next [–] 
+You could have a buffer overflow attack talking advantage of a specific popular video player out there.Since video players are usually not very security focused, someone determined could do it.And since video torrents are unzipped, a single chunk can be replaced with the malicious chunk with the attack code. It can look like a tiny jitter depending on the chunk size/total video size.
+ 
+
+
+
+  
+ 
+throwaway2048 on Feb 23, 2017  | root | parent | next [–] 
+You could just do this with a video you release anyways, and skip the century of GPU runtime.This break requires you control/generate both the original and the evil file.
+ 
+
+
+
+  
+ 
+Bartweiss on Feb 23, 2017  | root | parent | next [–] 
+Yep, and even if you feel the need for low-frequency attacks to keep seeding high, you could probably just fix a low chance of actually executing malicious behavior.
+ 
+
+
+
+  
+ 
+svantana on Feb 23, 2017  | root | parent | prev | next [–] 
+My thought exactly, although you would need your malware to incubate for some time to allow it to spread properly first.
+ 
+
+
+
+  
+ 
+mlonkibjuyhv on Feb 23, 2017  | root | parent | next [–] 
+I wonder if you could model this similarly to populations. As in will the malware ever go extinct? Obviously an attacker probably won't stop seeding, but let's say shim does stop seeding. At this point x% of seeders have the payload. Seeders on average share the file y times. Will x tend to zero below a threshold of 50%?And if the attacker does not stop seeding, will the infected quota stabilize?
+ 
+
+
+
+  
+ 
+Bartweiss on Feb 23, 2017  | root | parent | prev | next [–] 
+Couldn't you get nearly the same intermittent-attack behavior just by saying something like "break out of codec, only do malicious behavior one time in 1,000"?
+ 
+
+
+
+  
+ 
+eth0up on Feb 23, 2017  | root | parent | prev | next [–] 
+There is/was this: https://arstechnica.com/security/2016/11/elegant-0day-unicor...
+ 
+
+
+
+  
+ 
+brokenmachine on Feb 24, 2017  | root | parent | prev | next [–] 
+With a buffer overflow. Video players are supposedly pretty vulnerable to these kinds of attacks since they need to deal with many different types of media, which means there is quite a large attack surface and they have to accept all kinds of odd video files.There's a book called "A Bug Hunters Diary" that explained this exact thing in a video played using a particular version of VLC. Quite far over my head how he did it but it was interesting to read.see http://www.trapkit.de/books/bhd/en.html#videos (Chapter 2 — Back to the 90s)Demonstration Videos of the exploit at http://www.youtube.com/watch?v=qSyLkglLX-c&fmt=22 and http://www.youtube.com/watch?v=5ZbX9zfnTuI&fmt=22
+ 
+
+
+
+  
+ 
+kbart on Feb 23, 2017  | root | parent | prev | next [–] 
+It can use buffer overflow (which is often easier than it looks in a large codebase written with memory unsafe languages) to execute arbitrary code. Modern OS have protections from such attack vectors, but they are not sufficient enough and well-funded attacker can bypass them.
+ 
+
+
+
+  
+ 
+simias on Feb 23, 2017  | root | parent | prev | next [–] 
+You could replace the video by an executable probably, I'm sure many users would launch it, especially if the source of the torrent is "reputable" and with positive comments.Alternatively you could exploit a vulnerability in a codec library or something similar.
+ 
+
+
+
+  
+ 
+CydeWeys on Feb 23, 2017  | root | parent | prev | next [–] 
+Plenty of people download executables on BitTorrent too, so it'd be easier just to target that.  Go inject your malware into a popular torrent for pirating the latest version of Photoshop, or Windows, or a popular game.
+ 
+
+
+
+  
+ 
+michaf on Feb 25, 2017  | parent | prev | next [–] 
+I wrote a small proof of concept here: https://github.com/michaf/shattered-torrent-pocBoth Installer.py and Installer-evil.py result in the same piece hashes, with piece size chosen as 512. The only difference between the files is the shattered pdf fragment, encapsulated in a variable. This fragment starts exactly at the piece boundary, resulting in identical hashes.
+ 
+
+
+
+  
+ 
+nstj on Feb 23, 2017  | parent | prev | next [–] 
+I don't actually know the in's and out's of BitTorrent structure but wouldn't that not work as the 2 files would be completely different?ie: I'd be downloading (and putting together) some blocks of the "real" movie and some blocks of the "malware".  I'm guessing the resultant file wouldn't even open?
+ 
+
+
+
+  
+ 
+kbart on Feb 23, 2017  | root | parent | next [–] 
+Video files are purposely made to work even with some data blocks missing. It's the feature that enables video streaming. Valid header is usually enough for video player to at least try to play a file.
+ 
+
+
+
+  
+ 
+mavdi on Feb 23, 2017  | parent | prev | next [–] 
+To be honest this is a lovely evil plan. cough MPAA cough
+ 
+
+
+
+  
+ 
+lawless123 on Feb 23, 2017  | root | parent | next [–] 
+If they MPAA could subvert torrents of their property and and replace sections of the footage with just warnings (ruinning the download) i would find that much less objectionable than DRM.Frustrate the people pirating instead of punishing everyone else.
+ 
+
+
+
+  
+ 
+sp332 on Feb 23, 2017  | root | parent | next [–] 
+But instead, they injected torrents into a torrent tracker and then DoS'd it when the files were removed. https://web.archive.org/web/20080530115944/http://revision3....
+ 
+
+
+
+  
+ 
+kbart on Feb 23, 2017  | root | parent | prev | next [–] 
+If such technique would be as accurate as their DCMA take-down notices, I wouldn't be surprised in resulting subverted Linux installations and whatnot.
+ 
+
+
+
+  
+ 
+zo1 on Feb 23, 2017  | root | parent | prev | next [–] 
+It'll only work for a few days/months after people start noticing it.
+ 
+
+
+
+  
+ 
+sktrdie on Feb 23, 2017  | parent | prev | next [–] 
+But you can't control the data in the malware. It will be garbage.
+ 
+
+
+
+  
+ 
+Natanael_L on Feb 23, 2017  | root | parent | next [–] 
+They controlled the visual appearance of the different PDF files in the example. Why couldn't you inject malware instead?
+ 
+
+
+
+  
+ 
+sktrdie on Feb 23, 2017  | root | parent | next [–] 
+Are you sure this isn't only possible because of the PDF file format? http://shattered.it/static/pdf_format.pngHence shouldn't be possible for general malware.
+ 
+
+
+
+  
+ 
+Natanael_L on Feb 23, 2017  | root | parent | next [–] 
+General malware can be injected in almost anything. Few formats are strict enough to stop that.
+ 
+
+
+
+  
+ 
+sktrdie on Feb 23, 2017  | root | parent | prev | next [–] 
+Because controlling the visual appearance would change the data of the PDF, hence change the underlying hash.
+ 
+
+
+
+  
+ 
+saalweachter on Feb 23, 2017  | root | parent | next [–] 
+Non-coding regions.Not every part of a file codes for its apparent output.  Comments, symbol names, whitespace, color tables... for most file formats, there are countless variations of the bytes on disk which produce outputs which are visually indistinguishable.The trick is to identify this space in a way that lets you efficiently iterate through it until you find a version which matches the target hash.
+ 
+
+
+
+  
+ 
+vortico on Feb 23, 2017  | root | parent | prev | next [–] 
+Your "computable nonce" can exist in an unimportant place of the binary. Such as an unused portion of .data
+ 
+
+
+
+  
+ 
+angry-hacker on Feb 23, 2017  | parent | prev | next [–] 
+It's easier just to upload malware to a torrent site. Windows crack, let other people or botnet to download it and suckers will get your malware too. If AV complains, say that is an expected behavior.
+ 
+
+
+
+  
+ 
+yAnonymous on Feb 23, 2017  | parent | prev | next [–] 
+>This will mess up torrent sharing websites in a hurry.I doubt it. Should this ever become a problem, it would be trivial to change the hashing algorithm. Not worth the effort.
+ 
+
+
+
+  
+ 
+inetknght on Feb 23, 2017  | root | parent | next [–] 
+How do you propose to ensure backwards compatibility with the millions of torrents already produced?
+ 
+
+
+
+  
+ 
+VMG on Feb 23, 2017  | root | parent | next [–] 
+New clients could support multiple hash algs, so old torrents would not be a problem. New torrents could provide hashes for multiple algs, depending on the extensiblity of torrent format. Otherwise the torrent sites could provide two URLs or torrent files.
+ 
+
+
+
+  
+ 
+yAnonymous on Feb 24, 2017  | root | parent | prev | next [–] 
+Depends on the implementation, which I'm not familiar with, but there are definitely ways to handle that.
+ 
+
+
+
+  
+ 
+dantillberg on Feb 23, 2017  | parent | prev | next [–] 
+It doesn't have to be a new torrent. You could just join the swarm for an existing torrent and seed different data for selected parts of the torrent.
+ 
+
+
+
+  
+ 
+cesarb on Feb 23, 2017  | prev | next [–] 
+On a quick scroll of the comments, I haven't seen this posted so far: http://valerieaurora.org/hash.htmlWe're at the "First collision found" stage, where the programmer reaction is "Gather around a co-worker's computer, comparing the colliding inputs and running the hash function on them", and the non-expert reaction is "Explain why a simple collision attack is still useless, it's really the second pre-image attack that counts".
+ 
+
+
+
+  
+ 
+kuschkufan on Feb 23, 2017  | parent | next [–] 
+Love this page. Someone should remind her to update the table for sha1 now.
+ 
+
+
+
+  
+ 
+rocqua on Feb 23, 2017  | root | parent | next [–] 
+It seems to have been updated already.
+ 
+
+
+
+  
+ 
+orblivion on Feb 23, 2017  | parent | prev | next [–] 
+I'm a programmer and I exhibit some of the column 3 behavior.
+ 
+
+
+
+  
+ 
+floatboth on Feb 23, 2017  | parent | prev | next [–] 
+Heh, RIPEMD-160, forever under peer review :)
+ 
+
+
+
+  
+ 
+lisper on Feb 23, 2017  | prev | next [–] 
+This point seems to be getting re-hashed (no pun intended) a lot, so here's a quick summary: there are three kinds of attacks on cryptographic hashes: collision attacks, second-preimage attacks, and first-preimage attacks.Collision attack: find two documents with the same hash.  That's what was done here.Second-preimage attack: given a document, find a second document with the same hash.First-preimage attack: given an arbitrary hash, find a document with that hash.These are in order of increasing severity.  A collision attack is the least severe, but it's still very serious.  You can't use a collision to compromise existing certificates, but you can use them to compromise future certificates because you can get a signature on one document that is also valid for a different document.  Collision attacks are also stepping stones to pre-image attacks.UPDATE: some people are raising the possibility of hashes where some values have 1 or 0 preimages, which makes second and first preimage attacks formally impossible.  Yes, such hashes are possible (in fact trivial) to construct, but they are not cryptographically secure.  One of the requirements for a cryptographically secure hash is that all possible hash values are (more or less) equally likely.
+ 
+
+
+
+  
+ 
+mikegerwitz on Feb 23, 2017  | parent | next [–] 
+The severity between the preimage attacks depends on context.For Git, for example, a first-preimage attack won't buy you anything, but a second-preimage could be potentially devastating depending on how lucky you get.If Mallory wanted to make it look like you signed a document you didn't, second-preimage would be devestating.  And with the demonstration of two PDFs sharing the same hash, this is a pretty severe one: many PGP signatures, for example, still use SHA-1.  But even so, you could take some signature from any point in the past.
+ 
+
+
+
+  
+ 
+gliptic on Feb 23, 2017  | root | parent | next [–] 
+If you can do a first-preimage attack, you can do a second-preimage attack. Just hash the document you have. Therefore a first-preimage attack is strictly more severe.
+ 
+
+
+
+  
+ 
+ddlatham on Feb 23, 2017  | root | parent | next [–] 
+Not if the second-preimage attack is properly defined to find a second distinct document with the same hash as the first.
+ 
+
+
+
+  
+ 
+lilyball on Feb 23, 2017  | root | parent | next [–] 
+If you can do a first-preimage attack, then just keep doing it until you get a distinct document. I'm not sure what sort of first-preimage attack you have in mind that is only capable of producing a single preimage for any hash.
+ 
+
+
+
+  
+ 
+ddlatham on Feb 23, 2017  | root | parent | next [–] 
+Since the parent was claiming that first-preimage attacks were strictly more severe, which seems to be a theoretical claim for all possible first-preimage attacks, I was pointing out that doesn't necessarily hold.  First-preimage attacks are not  guaranteed a priori to be able to produce multiple distinct documents for a given hash.
+ 
+
+
+
+  
+ 
+lilyball on Feb 23, 2017  | root | parent | next [–] 
+I think the argument here is twofold:1) If you have some first-preimage attack against a hash, that attack can probably be "continued" such that it produces multiple preimages.2) Even if your attack can only ever produce one preimage, since there's an infinite number of documents that can produce the same hash, it's vanishingly unlikely that your attack will produce the exact preimage that you already have (note: this is assuming a cryptographically secure hash, where all outputs are equally likely). Therefore, even if you can only get one preimage, it's still almost certainly a second preimage.
+ 
+
+
+
+  
+ 
+xamuel on Feb 23, 2017  | root | parent | prev | next [–] 
+mikegerwitz is technically right.  As an illuminating example, consider a hash-algorithm in which there's at least one hash that occurs precisely once.  Then a 2nd-preimage attack is formally impossible no matter how much computational power you have (assuming by "second" you meant "distinct second").  But a 1st-preimage attack is formally possible.
+ 
+
+
+
+  
+ 
+tlb on Feb 23, 2017  | root | parent | next [–] 
+A 'good' hash function (exhibiting uniformity) that converts arbitrary-sized documents to finite-sized hashes should not have any hashes that occur precisely once.This can occur with ill-conceived hash functions, for example if it bundles the length of the document with the hash, so there would be only 256 distinct hashes with length=1.
+ 
+
+
+
+  
+ 
+lisper on Feb 23, 2017  | root | parent | prev | next [–] 
+One of the requirements for a hash to be cryptographically secure is that all possible values are equally likely.  So yes, it is possible (in fact trivial) to construct a hash of the sort you describe, but such a hash would not be cryptographically secure to begin with.
+ 
+
+
+
+  
+ 
+Dylan16807 on Feb 24, 2017  | root | parent | next [–] 
+It's easier to use and to reason about a uniform hash, but you can design a secure system with a non-uniform hash.I'd be willing to bet that an altered version of SHA3-256 that replaces four bits in the middle with length%16 is better for most purposes than SHA256, despite being non-uniform.
+ 
+
+
+
+  
+ 
+gliptic on Feb 23, 2017  | root | parent | prev | next [–] 
+For that to be the case, in real hash functions, it would require you to be constrained to a certain number of possible preimages, not too many more than the number of possible hashes, so that it's likely that H^-1(H(x)) = x but there can still be a distinct y such that H(y) = H(x).So I concede that this could be the case under very specific circumstances, but I doubt it makes much difference in the real world.
+ 
+
+
+
+  
+ 
+mikegerwitz on Feb 23, 2017  | root | parent | prev | next [–] 
+Getting the first-preimage of the document and hashing that same preimage just gives you back the original hash---it's like an identity function.  It doesn't give you a second document.Edit: I misinterpreted your message.  I added "same" above to convey what I thought you were saying.
+ 
+
+
+
+  
+ 
+Gankro on Feb 23, 2017  | root | parent | next [–] 
+You seem to be mistaking or misreading something here.* Collision attack: find X and Y such that hash(X) = hash(Y)* Second-preimage: given X, find Y such that hash(X) = hash(Y)* First-preimage: given hash(X), find Y such that hash(X) = hash(Y)> If you have an encrypted message that you hashed/signed _before_ encrypting, and Eve wants to know what you said, first-preimage would be worse, and second-preimage wouldn't buy you anything.first-preimage doesn't do anything here. It gets you some text that matches the hash. It's overwhelmingly unlikely to be the original message, and if it's not the exact original message, it won't have any similarity to it. Unless you can enumerate all hash collisions for a value efficiently, which is a much a stronger claim, this isn't any better than brute-force guessing the text.> Getting the preimage of the document and hashing that preimage just gives you back the original hash---it's like an identity function. It doesn't give you a second document.The second-preimage attack supposes you have X, the first-preimage attack supposes you have hash(X). If "all" you have is a first-preimage attack, then it's trivial convert it into a second-preimage attack. You hash(X) and feed it into your attack.
+ 
+
+
+
+  
+ 
+ddlatham on Feb 23, 2017  | root | parent | next [–] 
+You're missing something in your definition of a second-preimage attack, which is that Y != X.
+ 
+
+
+
+  
+ 
+Gankro on Feb 23, 2017  | root | parent | next [–] 
+Ah good point. It could be that the first-preimage attack gets you exactly X, in which case it fails to handle second-preimage. I would expect this to be incredibly unlikely (especially since they seem to generally involve generating some random garbage). I would also expect most first-preimage attacks have a way to "continue" to a third value, eventually.
+ 
+
+
+
+  
+ 
+shawabawa3 on Feb 23, 2017  | root | parent | prev | next [–] 
+That's kind of implicit.If X = Y, it's not an attack, it's the primary purpose of hashing
+ 
+
+
+
+  
+ 
+palunon on Feb 23, 2017  | root | parent | prev | next [–] 
+But if you have a first preimage atack, you could then use it on the hash to get (presumably) another document...
+ 
+
+
+
+  
+ 
+mikegerwitz on Feb 23, 2017  | root | parent | next [–] 
+A first-preimage attack just means you have H(P), find preimage P (where H is SHA1).If you found preimage P and wanted another document that hashes into it (so, H(P) = H(P')), you'd have to perform a second-preimage attack and brute-force one.  An "ideal" hash function is one where the only way to compute a second-preimage is through brute force.  Due to the pidgeonhole principle, there will always be a second preimage---it's just whether it's computational feasible to compute it.
+ 
+
+
+
+  
+ 
+lilyball on Feb 23, 2017  | root | parent | next [–] 
+> Due to the pidgeonhole principle, there will always be a second preimageIt's trivial to construct a hash function where this isn't true. However, it should be true for any cryptographically secure hash.
+ 
+
+
+
+  
+ 
+petertodd on Feb 23, 2017  | root | parent | prev | next [–] 
+Git's workflow makes first-preimage attacks dangerous, because a mallicious third-party may submit a pull-req to your repo that contains files for which they've pre-generated a collision: https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2017...Git is vulnerable to SHA1 collisions in standard development workflows.
+ 
+
+
+
+  
+ 
+bo1024 on Feb 23, 2017  | parent | prev | next [–] 
+> UPDATE: some people are raising the possibility of hashes where some values have 1 or 0 preimages, which makes second and first preimage attacks formally impossible. Yes, such hashes are possible (in fact trivial) to construct, but they are not cryptographically secure. One of the requirements for a cryptographically secure hash is that all possible hash values are (more or less) equally likely.True, but the main issue with these proposals is that we want hash functions that are much shorter than the original thing being hashed. For instance, we want every string of length one million bits to get hashed down to some string of length 4096. So those 2^4096 short hash strings can't mostly have 1 or 0 pre-images, in fact on average they have to have gazillions of pre-images each.
+ 
+
+
+
+  
+ 
+andreyf on Feb 23, 2017  | root | parent | next [–] 
+> in fact on average they have to have gazillions of pre-images eachpretty sure "on average" they have at least a few gazillion orders of magnitude more than a few gazillion pre-images each ;)
+ 
+
+
+
+  
+ 
+xapata on Feb 23, 2017  | root | parent | next [–] 
+You're saying the average of infinities is a gazillion gazillion?For any hashcode, there are an infinite number of documents that would result in that hashcode.
+ 
+
+
+
+  
+ 
+andreyf on Feb 24, 2017  | root | parent | next [–] 
+Nah, way bigger than that. I'm saying 10 times as big as a few gazillion at least a few gazillion times!(key words are "at least")
+ 
+
+
+
+  
+ 
+yuhong on Feb 23, 2017  | parent | prev | next [–] 
+Also the difference between identical and chosen prefix attacks too (this attack is identical prefix).
+ 
+
+
+
+  
+ 
+tripzilch on Feb 23, 2017  | parent | prev | next [–] 
+> This point seems to be getting re-hashed (no pun intended)why not??
+ 
+
+
+
+  
+ 
+mate_soos on Feb 23, 2017  | prev | next [–] 
+I am a bit saddened that Vegard Nossum's work, which they used for encoding SHA-1 to SAT, is only mentioned as a footnote. The github code is athttps://github.com/vegard/sha1-satand his Master Thesis, whose quality is approaching a PhD thesis is here:https://www.duo.uio.no/bitstream/handle/10852/34912/thesis-o...Note that they also only mention MiniSat as a footnote, which is pretty bad. The relevant paper is athttp://minisat.se/downloads/MiniSat.pdfAll of these are great reads. Highly recommended.
+ 
+
+
+
+  
+ 
+amichal on Feb 23, 2017  | prev | next [–] 
+Linked http://shattered.io/ has two PDFs that render differently as examples. They indeed have same SHA-1 and are even the same size.  $ls -l sha*.pdf 
+  -rw-r--r--@ 1 amichal  staff  422435 Feb 23 10:01 shattered-1.pdf
+  -rw-r--r--@ 1 amichal  staff  422435 Feb 23 10:14 shattered-2.pdf
+  $shasum -a 1 sha*.pdf
+  38762cf7f55934b34d179ae6a4c80cadccbb7f0a  shattered-1.pdf
+  38762cf7f55934b34d179ae6a4c80cadccbb7f0a  shattered-2.pdf
+
+Of course other hashes are different:  $shasum -a 256 sha*.pdf
+
+  2bb787a73e37352f92383abe7e2902936d1059ad9f1ba6daaa9c1e58ee6970d0  shattered-1.pdf
+  d4488775d29bdef7993367d541064dbdda50d383f89f0aa13a6ff2e0894ba5ff  shattered-2.pdf 
+
+  $md5 sha*.pdf
+  
+  MD5 (shattered-1.pdf) = ee4aa52b139d925f8d8884402b0a750c
+  MD5 (shattered-2.pdf) = 5bd9d8cabc46041579a311230539b8d1
+ 
+
+
+
+  
+ 
+AlexandrB on Feb 23, 2017  | parent | next [–] 
+As someone who knows only the very basics of cryptography - would verifying hashes of a file using SHA-1 and a "weak" hash function like MD5 provide any additional protection over just SHA-1? I.e. how much harder would be it be to create a collision in both SHA-1 and MD5 than in just SHA-1?My common sense intuition is that it would be a lot harder, but I'm guessing theoretically/mathematically it's only a little bit harder given how easy collisions in MD5 are?
+ 
+
+
+
+  
+ 
+anderskaseorg on Feb 23, 2017  | root | parent | next [–] 
+It’s actually not much harder at all, as first noted by Joux, “Multicollisions in iterated hash functions. Application to cascaded constructions”, 2004.https://www.iacr.org/archive/crypto2004/31520306/multicollis...
+ 
+
+
+
+  
+ 
+AlexandrB on Feb 23, 2017  | root | parent | next [–] 
+Thanks, this is fascinating!
+ 
+
+
+
+  
+ 
+zymhan on Feb 23, 2017  | root | parent | prev | next [–] 
+It would certainly be harder, but as with breaking any hash, it becomes more feasible every day.It's likely easier to replace "sha1" with "sha256" in your code than it is to construct a Frankenstein's monster of hashing.
+ 
+
+
+
+  
+ 
+amichal on Feb 23, 2017  | parent | prev | next [–] 
+The differing bytes are interestinghttp://imgur.com/a/wI4xb
+ 
+
+
+
+  
+ 
+Twirrim on Feb 23, 2017  | parent | prev | next [–] 
+The PDF example given is somewhat ridiculous."For example, by crafting the two colliding PDF files as two rental agreements with different rent, it is possible to trick someone to create a valid signature for a high-rent contract by having him or her sign a low-rent contract. "Talk about ridiculous scenarios only people living in a tech bubble could come up with.How many landlords do you imagine know what sha-1 checksums even are, let alone would try and use it as proof the evil version of the rental agreement is incorrect?"I would have gotten away with it, if it wasn't for you meddling kids and your fancy SHA-256 checksums!"
+ 
+
+
+
+  
+ 
+mike_hearn on Feb 23, 2017  | root | parent | next [–] 
+Obviously the landlord doesn't know or care what SHA-1 is, but he may care if his Adobe Reader says "This file was signed by the Department of Housing" at the top of the screen when he opens the PDF. As Reader fully supports signed PDFs and they do get used, believe it or not, this attack is not theoretical.
+ 
+
+
+
+  
+ 
+udev on Feb 23, 2017  | root | parent | prev | next [–] 
+This is not as far fetched as you think.In UK, rental contracts are often digitally signed by the renter and landlord.I am sure in finance world many other types of contracts are signed digitally, also under the assumption that both parties sign the same thing.
+ 
+
+
+
+  
+ 
+pornel on Feb 23, 2017  | root | parent | next [–] 
+The "signing" usually doesn't involve any cryptography. You just express your agreement, which can be as trivial as typing your initials in a box.It's purely a legal, not technical thing, so if you cleverly forge the document using collisions, you'll be shouting "but the SHA-1 matched!" from behind the bars.
+ 
+
+
+
+  
+ 
+pfg on Feb 23, 2017  | root | parent | next [–] 
+The legal thing does make reference to the technical thing in Europe[1] (and probably elsewhere too), by making digital signatures (which use crypto) legally binding. The question is more how courts would rule in a case where a colliding document is signed. That would probably depend on whether you can prove which of the two parties authored the colliding document (since that's a requirement for this particular attack).(Note: I don't know whether this attack is practical for qualified electronic signatures as used by EU countries.)[1]: https://en.wikipedia.org/wiki/Qualified_electronic_signature
+ 
+
+
+
+  
+ 
+Twirrim on Feb 23, 2017  | root | parent | prev | next [–] 
+There's a difference between digital signatures and sha-1 checksums of the files, which is what they seem to have been demonstrating.Mysteriously the text I quoted has now vanished from the original blog post.
+ 
+
+
+
+  
+ 
+pfg on Feb 23, 2017  | root | parent | prev | next [–] 
+Presumably they're talking about digital signatures. I don't know how common that is in the U.S., but it's used quite a bit in many European countries as a means to sign contracts and such. (I also don't know enough about the implementation details to say whether a colliding pdf file would be sufficient to trick these systems, but let's assume so for the sake of this argument.)
+ 
+
+
+
+  
+ 
+anilgulecha on Feb 23, 2017  | prev | next [–] 
+Big things affected:* DHT/torrent hashes - A group of malicious peers could serve malware for a given hash.* Git - A commit may be replaced by another without affecting the following commits.* PGP/GPG -- Any old keys still in use. (New keys do not use SHA1.)* Distribution software checksum. SHA1 is the most common digest provided (even MD5 for many).Edit: Yes, I understand this is a collision attack. But yes, it's still a attack vector as 2 same blocks can be generated now, with one published, widely deployed (torrent/git), and then replaced at a later date.
+ 
+
+
+
+  
+ 
+fivesigma on Feb 23, 2017  | parent | next [–] 
+None of what you mentioned is affected since this is a collision attack. They purposely created 2 files with the same hash.Creating a file with the same hash as legit file is a preimage attack and is much more difficult to perform (many orders of magnitude more difficult).This still doesn't mean that SHA-1 isn't dogshit however. It should have been phased out years ago.
+ 
+
+
+
+  
+ 
+mike_hearn on Feb 23, 2017  | root | parent | next [–] 
+anilgulecha is correct. Consider the following attack:You wish to undermine the security of an important codebase managed by git.You write a valuable and useful contribution to the code. You also create another version of the commit that has the same SHA-1 as the first, which breaks the security of that code.You submit the first commit, it is accepted and merged.Now you wait for your target to do a git clone on the repository, perhaps because it's a build environment. You then MITM it (e.g. using infrastructure like QUANTUM INSERT) and redirect the clone to your own git server, which serves the bad commit.The target compares the top commit hashes of what it expected to get and what it actually got, and is none the wiser. They now compile the code and produce a backdoored binary.
+ 
+
+
+
+  
+ 
+rocqua on Feb 23, 2017  | root | parent | next [–] 
+You need enough leeway in the first commit though. As this is a collision attack, you need to be able to tweak both commits in order to get their hashes to collide.The mangling in the first commit is probably going to look mighty-suspicious. You might be able to handle this if you get to mangle e.g. code comments. In any case, you need something similar like PDFs malleability where you can change one document without the change being noticeable.
+ 
+
+
+
+  
+ 
+euyyn on Feb 23, 2017  | root | parent | next [–] 
+Trailing whitespace! :)
+ 
+
+
+
+  
+ 
+Klathmon on Feb 23, 2017  | root | parent | next [–] 
+That you of course helpfully fix in the very next commit!
+ 
+
+
+
+  
+ 
+hvidgaard on Feb 23, 2017  | root | parent | prev | next [–] 
+It was broken 12 years ago, so no serious software that require cryptographically secure hash functions should use it.
+ 
+
+
+
+  
+ 
+anilgulecha on Feb 23, 2017  | root | parent | prev | next [–] 
+Create 2 torrents with the same hash.Release one into the wild.Wait.Infect.
+ 
+
+
+
+  
+ 
+koolba on Feb 23, 2017  | root | parent | next [–] 
+Torrents have a tree of hashes for the parts. That allows validating pieces without the entire file (which is also validated at the end).Probabilistically, the hashes of the parts would not match even if the top level hash matched.
+ 
+
+
+
+  
+ 
+pgeorgi on Feb 23, 2017  | root | parent | next [–] 
+You could (try to) collide one of the blocks at the end of the tree. The tree of hashes will still be the same since the hash of the block didn't change.Then join the torrent with a client that doesn't download but only upload that block (there will be some that will pick it from you). Many legit copies, except for those that were so unlucky to fetch the block from you.If you manage to build such a block based on one in recurring content (eg. a distributor's logo at the beginning of the file), it could be reused, too.
+ 
+
+
+
+  
+ 
+koolba on Feb 23, 2017  | root | parent | next [–] 
+> You could (try to) collide one of the blocks at the end of the tree. The tree of hashes will still be the same since the hash of the block didn't change.Except you can't do that as this isn't a preimage attack. You can't create an arbitrary bad file matching an existing SHA-1 with this.
+ 
+
+
+
+  
+ 
+Natanael_L on Feb 23, 2017  | root | parent | next [–] 
+If you created the original torrent then you can do it
+ 
+
+
+
+  
+ 
+jakeogh on Feb 23, 2017  | root | parent | prev | next [–] 
+On the other hand it's useful for denial of service. If you want to disrupt a swarm feeding it bad data is 'good enough'.
+ 
+
+
+
+  
+ 
+koolba on Feb 23, 2017  | root | parent | next [–] 
+> On the other hand it's useful for denial of service. If you want to disrupt a swarm feeding it bad data is 'good enough'.No you can't do that either. Again, this is not a preimage attack: https://en.wikipedia.org/wiki/Preimage_attackThat means you can't use this to match an arbitrary SHA-1. That means you can't use it to generate bad parts of a larger file.What you're describing is already possible by having clients connect to a swarm, pretend they have parts of a file, and send gibberish. The receiver won't know until they finished downloading the part and hence waste the part-size in download capacity (i.e. DOS). I bet with IPv6 it'd be really easy to have a single malicious client pretend to be a world of swarm members.
+ 
+
+
+
+  
+ 
+jakeogh on Feb 23, 2017  | root | parent | next [–] 
+Thanks, so it can gen 2 same size colliding chunks, but it can not take an arb chunk and generate a collision for it. Right?
+ 
+
+
+
+  
+ 
+koolba on Feb 23, 2017  | root | parent | next [–] 
+Yes that's my understanding of it. In the PDF example on the site, the file format allows enough tweaking to the raw data without impacting the content to make it feasible.
+ 
+
+
+
+  
+ 
+pgeorgi on Feb 23, 2017  | root | parent | prev | next [–] 
+One of the good parts of doing it at the leaf hashes over the top level hash as proposed further up the thread is that quicktime/avi/etc are much more amenable to carrying some "junk" data than trying to figure out two colliding merkle tries with the same hash.
+ 
+
+
+
+  
+ 
+anilgulecha on Feb 23, 2017  | root | parent | prev | next [–] 
+The initial torrent metadata is pulled from nothing but the first hash. This is the point where the rest of the data forks.. someone gets the movie, another gets the .exe.
+ 
+
+
+
+  
+ 
+koolba on Feb 23, 2017  | root | parent | next [–] 
+That's not an issue with the torrent. That would be with the magnet link format.Also, and more importantly, this isn't a preimage attack so replacing an existing torrent's SHA-1 hash with a malicious one isn't computational possible.
+ 
+
+
+
+  
+ 
+anilgulecha on Feb 23, 2017  | root | parent | next [–] 
+Magnet URI hash is SHA1.A hash collision can still be used as an attack if you create 2 torrents with the same hash and then distribute.
+ 
+
+
+
+  
+ 
+koolba on Feb 23, 2017  | root | parent | next [–] 
+That's not an issue with the torrents. It's an issue with the magnet URI format for referncing torrents.The "good" torrent would not be susceptible to attack via this receiving the entire torrent file directly (say over HTTPS) is fine.
+ 
+
+
+
+  
+ 
+anilgulecha on Feb 23, 2017  | root | parent | next [–] 
+Torrent files have been deprecated for a while. Magnet URI is the the preferred/default method of sharing. TPB did this in 2012[1].[1] https://torrentfreak.com/the-pirate-bay-dumps-torrents-12022...
+ 
+
+
+
+  
+ 
+koolba on Feb 23, 2017  | root | parent | next [–] 
+Looks like it's time to update the magnet link format to use a newer hash.
+ 
+
+
+
+  
+ 
+rakoo on Feb 23, 2017  | root | parent | prev | next [–] 
+It's technically true to speak of a tree, but it's less misleading to say it's a list
+ 
+
+
+
+  
+ 
+fivesigma on Feb 23, 2017  | root | parent | prev | next [–] 
+This requires the addition of random garbage in the first file which someone will detect anyway. Why not release an infected file with a timebomb malware instead of colliding SHA1? Much cheaper. Still, none of this allows you to attack an already existing torrent.
+ 
+
+
+
+  
+ 
+xiphias on Feb 23, 2017  | root | parent | next [–] 
+Nobody will detect if a not important metadata field/asciiart is created/changed randomly, so this is a practical attack.
+ 
+
+
+
+  
+ 
+shemnon42 on Feb 23, 2017  | root | parent | prev | next [–] 
+> This requires the addition of random garbage in the first fileLike a third party binary driver?
+ 
+
+
+
+  
+ 
+maxtaco on Feb 23, 2017  | parent | prev | next [–] 
+PGP V4 key fingerprints still use SHA-1 exclusively. There hasn't been an update to this part of the RFC as far as I know [1]. Collisions where both preimages are of the attacker's choosing matter less in this context, but who knows what clever attacks people can come up with.[1] https://tools.ietf.org/html/rfc4880#page-71
+ 
+
+
+
+  
+ 
+agentgt on Feb 23, 2017  | parent | prev | next [–] 
+> * PGP/GPG -- Any old keys still in use. (New keys do not use SHA1.)> * Distribution software checksum. SHA1 is the most common digest provided (even MD5 for many).Software distribution seems to be the greatest threat (e.g. a Maven repository or Debian repository).It still seems like an enormous amount of work. You would have to go after a package with an old PGP key and then I guess go spoof a mirror (most of these guys already use SSL so that is a problem).  There are probably easier and far more cost effective attack vectors.
+ 
+
+
+
+  
+ 
+contravariant on Feb 23, 2017  | parent | prev | next [–] 
+>* Distribution software checksum. SHA1 is the most common digest provided (even MD5 for many).Maybe I'm mistaken, but isn't the purpose of those mainly to verify that you've downloaded the file correctly? At least, the use of MD5 suggests that this is the case.
+ 
+
+
+
+  
+ 
+anilgulecha on Feb 23, 2017  | root | parent | next [–] 
+Correct, and if you have 2 images that have the same hash, you can serve one or the other at different times. This is the attack.
+ 
+
+
+
+  
+ 
+antoinealb on Feb 23, 2017  | root | parent | next [–] 
+SHA hashes cannot protect you against the distribution site getting compromised and the hash replaced.
+That is why most package manager include a form of cryptographic signatures (e.g. Ed25519 for OpenBSD's).
+SHA and MD5 hashes are just used to protect against accidental corruption, not targeted attacks.
+ 
+
+
+
+  
+ 
+jnwatson on Feb 23, 2017  | root | parent | next [–] 
+No. Signatures provide the same amount of integrity protection. In fact, all practical asymmetric signature schemes sign a hash. If an attacker can control what somebody signs, he can switch out signed documents using this vulnerability.
+ 
+
+
+
+  
+ 
+antoinealb on Feb 23, 2017  | root | parent | next [–] 
+well I would say that if an attacker controls what you sign, your security model is already toast, isn't it ?
+ 
+
+
+
+  
+ 
+anilgulecha on Feb 23, 2017  | root | parent | next [–] 
+Not if you sign with an ideal cryptography hash. (Rather than spend expensive compute on signing the whole message, you create a hash, and sign that.)The big news here is that SHA1 is now definitively not a cryptographically secure hash.
+ 
+
+
+
+  
+ 
+simias on Feb 23, 2017  | root | parent | prev | next [–] 
+You can use SHA for this purpose if you retrieve the hashes from a trusted and secured source.Buildroot does that for 3rd party packages for instance. It downloads the source from the original website (possibly completely non-secured) but then validates the checksum against a locally trusted hash list. Buildroot supports a variety of hash algorithms but many packages still use SHA-1.
+ 
+
+
+
+  
+ 
+BlackFly on Feb 23, 2017  | root | parent | prev | next [–] 
+To be complete, it should be pointed out that the signature techniques you mention are signing not the document itself but a hash of the document. This attack does allow a bait and switch attack on cryptographically signed documents that utilize SHA-1 as the hash.
+ 
+
+
+
+  
+ 
+pgeorgi on Feb 23, 2017  | root | parent | prev | next [–] 
+If you can switch between the images, you can also switch hashes. Without a signature they serve _only_ for making sure the network didn't barf into your stream.
+ 
+
+
+
+  
+ 
+stavros on Feb 23, 2017  | root | parent | prev | next [–] 
+The GP probably means "that it wasn't corrupted during the download", as there are a few attack vectors for someone who could serve a different file (they could trivially serve a different hash).
+ 
+
+
+
+  
+ 
+baq on Feb 23, 2017  | parent | prev | next [–] 
+i can imagine the torrent thing to be worth the $100k per collision.
+ 
+
+
+
+  
+ 
+qjighap on Feb 23, 2017  | root | parent | next [–] 
+You haven't seen my collection of cat pics torrent ;)Also from a more serious stance the danger is the malware vector or the destruction of the ability to have integrity and not the data in the torrent itself.
+ 
+
+
+
+  
+ 
+ikeboy on Feb 23, 2017  | prev | next [–] 
+Someone just made about $2500See https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2013... and https://bitcoinchain.com/block_explorer/address/37k7toV1Nv4D...
+ 
+
+
+
+  
+ 
+JshWright on Feb 23, 2017  | parent | next [–] 
+That would offset a very, very tiny fraction of the cost of 56,940,000 CPU hours and 963,600 GPU hours.
+ 
+
+
+
+  
+ 
+robjan on Feb 23, 2017  | root | parent | next [–] 
+The person who collected it was most likely not a Google employee; just the first person to download those files who knew about the bounty.
+ 
+
+
+
+  
+ 
+vortico on Feb 23, 2017  | parent | prev | next [–] 
+Google is now rich!
+ 
+
+
+
+
+232 more comments... 
+
+
+Guidelines
+        | FAQ
+        | Lists
+        | API
+        | Security
+        | Legal
+        | Apply to YC
+        | ContactSearch:
+          
+
+
+
